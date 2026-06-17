@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import pandas_ta_classic as ta
 import pandas_ta_classic.cuda.panel as cuda_panel
 from pandas_ta_classic.cuda import (
     PanelIndicatorSpec,
@@ -58,6 +59,14 @@ def test_panel_indicators_pandas_has_expected_default_columns():
         "true_range",
         "atr_14",
         "willr_14",
+        "ao",
+        "cmo_14",
+        "cmf_20",
+        "hvol_20",
+        "obv",
+        "pvt",
+        "pvi_1",
+        "nvi_1",
     } == set(result.columns)
     assert result["return"].isna().groupby(frame["symbol"]).first().all()
     assert result["sma_20"].notna().any()
@@ -84,6 +93,33 @@ def test_panel_indicators_accepts_string_and_spec_subset():
     result = panel_indicators_pandas(frame, specs)
 
     assert list(result.columns) == ["sma_10", "roc_3"]
+
+
+def test_new_panel_specs_match_pandas_ta_per_symbol():
+    frame = make_panel(symbols=3, rows=80)
+    specs = ["ao", "cmo_14", "cmf_20", "hvol_20", "obv", "pvt", "pvi_1", "nvi_1"]
+    result = panel_indicators_pandas(frame, specs)
+
+    expected_parts = []
+    for _, part in frame.groupby("symbol", sort=False):
+        expected_parts.append(
+            pd.DataFrame(
+                {
+                    "ao": ta.ao(part["high"], part["low"]),
+                    "cmo_14": ta.cmo(part["close"], length=14),
+                    "cmf_20": ta.cmf(part["high"], part["low"], part["close"], part["volume"], length=20),
+                    "hvol_20": ta.hvol(part["close"], length=20),
+                    "obv": ta.obv(part["close"], part["volume"], talib=False),
+                    "pvt": ta.pvt(part["close"], part["volume"], drift=1),
+                    "pvi_1": ta.pvi(part["close"], part["volume"], length=1),
+                    "nvi_1": ta.nvi(part["close"], part["volume"], length=1),
+                },
+                index=part.index,
+            )
+        )
+    expected = pd.concat(expected_parts).sort_index()
+
+    pd.testing.assert_frame_equal(result, expected, check_dtype=False, check_exact=False, rtol=1e-6, atol=1e-6)
 
 
 def test_panel_indicators_cudf_matches_pandas_when_available():
@@ -115,7 +151,6 @@ def test_panel_auto_policy_reports_every_spec_when_cudf_is_available():
     assert set(policy.values()) <= {"pandas", "cudf"}
 
 
-
 def test_static_panel_policy_uses_pandas_for_small_panels():
     frame = make_panel(symbols=1, rows=100)
 
@@ -136,6 +171,28 @@ def test_static_panel_policy_uses_cuda_for_large_rolling_families():
         "roc_10": "pandas",
     }
 
+
+def test_static_panel_policy_uses_higher_threshold_for_shape_sensitive_volume_families():
+    medium_frame = make_panel(symbols=20, rows=5001)
+    large_frame = make_panel(symbols=260, rows=3847)
+
+    medium_policy = static_panel_engine_policy(medium_frame, ["sma_20", "obv", "pvt", "pvi_1", "nvi_1"])
+    large_policy = static_panel_engine_policy(large_frame, ["sma_20", "obv", "pvt", "pvi_1", "nvi_1"])
+
+    assert medium_policy == {
+        "sma_20": "cudf",
+        "obv": "pandas",
+        "pvt": "pandas",
+        "pvi_1": "pandas",
+        "nvi_1": "pandas",
+    }
+    assert large_policy == {
+        "sma_20": "cudf",
+        "obv": "cudf",
+        "pvt": "cudf",
+        "pvi_1": "pandas",
+        "nvi_1": "pandas",
+    }
 
 
 def test_auto_policy_uses_static_registry_without_benchmark(tmp_path, monkeypatch):

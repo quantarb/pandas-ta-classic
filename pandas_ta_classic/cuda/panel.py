@@ -71,6 +71,14 @@ DEFAULT_PANEL_SPECS: tuple[PanelIndicatorSpec, ...] = (
     PanelIndicatorSpec("true_range"),
     PanelIndicatorSpec("atr", length=14),
     PanelIndicatorSpec("willr", length=14),
+    PanelIndicatorSpec("ao"),
+    PanelIndicatorSpec("cmo", length=14),
+    PanelIndicatorSpec("cmf", length=20),
+    PanelIndicatorSpec("hvol", length=20),
+    PanelIndicatorSpec("obv"),
+    PanelIndicatorSpec("pvt"),
+    PanelIndicatorSpec("pvi", length=1),
+    PanelIndicatorSpec("nvi", length=1),
 )
 
 _AUTO_POLICY_CACHE: dict[tuple[int, int, tuple[int, ...], tuple[tuple[str, int | None, str, float, float, int], ...]], dict[str, IndicatorEngine]] = {}
@@ -85,9 +93,19 @@ _CUDA_FRIENDLY_KINDS = {
     "true_range",
     "atr",
     "willr",
+    "ao",
+    "cmo",
+    "cmf",
+    "hvol",
+    "obv",
+    "pvt",
 }
 _MIN_CUDA_ROWS = 100_000
 _MIN_CUDA_SYMBOLS = 16
+_CUDA_KIND_THRESHOLDS = {
+    "obv": (1_000_000, 256),
+    "pvt": (1_000_000, 256),
+}
 _POLICY_CACHE_VERSION = 1
 
 
@@ -100,6 +118,7 @@ def panel_indicators(
     high: str = "high",
     low: str = "low",
     close: str = "close",
+    volume: str = "volume",
     engine: Engine = "auto",
     as_pandas: bool = True,
     benchmark_repeats: int = 2,
@@ -128,6 +147,7 @@ def panel_indicators(
             high=high,
             low=low,
             close=close,
+            volume=volume,
         )
     if normalized_engine == "auto":
         return panel_indicators_auto(
@@ -138,6 +158,7 @@ def panel_indicators(
             high=high,
             low=low,
             close=close,
+            volume=volume,
             benchmark_repeats=benchmark_repeats,
             calibrate=calibrate,
             refresh=refresh,
@@ -151,6 +172,7 @@ def panel_indicators(
         high=high,
         low=low,
         close=close,
+        volume=volume,
         as_pandas=as_pandas,
     )
 
@@ -164,6 +186,7 @@ def panel_indicators_auto(
     high: str = "high",
     low: str = "low",
     close: str = "close",
+    volume: str = "volume",
     benchmark_repeats: int = 2,
     calibrate: bool = False,
     refresh: bool = False,
@@ -174,14 +197,14 @@ def panel_indicators_auto(
     normalized_specs = _normalize_specs(specs)
     if not cuda_available():
         return panel_indicators_pandas(
-            frame, normalized_specs, symbol=symbol, open_=open_, high=high, low=low, close=close
+            frame, normalized_specs, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume
         )
 
     try:
         import cudf
     except ImportError:
         return panel_indicators_pandas(
-            frame, normalized_specs, symbol=symbol, open_=open_, high=high, low=low, close=close
+            frame, normalized_specs, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume
         )
 
     _validate_columns(frame, (symbol, high, low, close))
@@ -196,6 +219,7 @@ def panel_indicators_auto(
             high=high,
             low=low,
             close=close,
+            volume=volume,
             repeats=benchmark_repeats,
             calibrate=calibrate,
             refresh=refresh,
@@ -203,7 +227,7 @@ def panel_indicators_auto(
         )
     except (MemoryError, RuntimeError):
         return panel_indicators_pandas(
-            frame, normalized_specs, symbol=symbol, open_=open_, high=high, low=low, close=close
+            frame, normalized_specs, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume
         )
 
     columns = {}
@@ -213,14 +237,14 @@ def panel_indicators_auto(
         if policy[spec.key] == "cudf":
             try:
                 if cudf_state is None:
-                    cudf_state = _make_state(gpu_frame, symbol=symbol, open_=open_, high=high, low=low, close=close)
+                    cudf_state = _make_state(gpu_frame, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume)
                 value = _compute_spec(cudf_state, spec)
                 _assign_spec_columns(columns, spec, value, to_pandas=True)
                 continue
             except (MemoryError, RuntimeError):
                 pass
         if pandas_state is None:
-            pandas_state = _make_state(frame, symbol=symbol, open_=open_, high=high, low=low, close=close)
+            pandas_state = _make_state(frame, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume)
         _assign_spec_columns(columns, spec, _compute_spec(pandas_state, spec), to_pandas=False)
     return pd.DataFrame(columns, index=frame.index)
 
@@ -235,6 +259,7 @@ def panel_auto_engine_policy(
     high: str = "high",
     low: str = "low",
     close: str = "close",
+    volume: str = "volume",
     repeats: int = 2,
     calibrate: bool = False,
     refresh: bool = False,
@@ -273,6 +298,7 @@ def panel_auto_engine_policy(
         high=high,
         low=low,
         close=close,
+        volume=volume,
         repeats=repeats,
     )
     policy = {timing.spec.key: timing.selected_engine for timing in timings}
@@ -291,10 +317,11 @@ def static_panel_engine_policy(
 
     normalized_specs = _normalize_specs(specs)
     symbol_count = _symbol_count(frame, symbol=symbol)
-    use_cuda_families = len(frame) >= _MIN_CUDA_ROWS and symbol_count >= _MIN_CUDA_SYMBOLS
     policy: dict[str, IndicatorEngine] = {}
     for spec in normalized_specs:
-        policy[spec.key] = "cudf" if use_cuda_families and spec.kind in _CUDA_FRIENDLY_KINDS else "pandas"
+        min_rows, min_symbols = _CUDA_KIND_THRESHOLDS.get(spec.kind, (_MIN_CUDA_ROWS, _MIN_CUDA_SYMBOLS))
+        use_cuda = len(frame) >= min_rows and symbol_count >= min_symbols
+        policy[spec.key] = "cudf" if use_cuda and spec.kind in _CUDA_FRIENDLY_KINDS else "pandas"
     return policy
 
 
@@ -308,6 +335,7 @@ def benchmark_panel_indicators(
     high: str = "high",
     low: str = "low",
     close: str = "close",
+    volume: str = "volume",
     repeats: int = 2,
 ) -> list[PanelIndicatorTiming]:
     """Benchmark pandas versus cuDF for each CUDA-capable panel indicator."""
@@ -326,13 +354,13 @@ def benchmark_panel_indicators(
     for spec in normalized_specs:
         pandas_seconds = _time_best(
             lambda spec=spec: panel_indicators_pandas(
-                frame, (spec,), symbol=symbol, open_=open_, high=high, low=low, close=close
+                frame, (spec,), symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume
             ),
             repeats,
         )
         cudf_seconds = _time_best(
             lambda spec=spec: panel_indicators_cudf(
-                gpu_frame, (spec,), symbol=symbol, open_=open_, high=high, low=low, close=close, as_pandas=False
+                gpu_frame, (spec,), symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume, as_pandas=False
             ),
             repeats,
             synchronize=True,
@@ -359,10 +387,11 @@ def panel_indicators_pandas(
     high: str = "high",
     low: str = "low",
     close: str = "close",
+    volume: str = "volume",
 ) -> pd.DataFrame:
     """Pandas implementation for CUDA-capable panel indicators."""
 
-    state = _make_state(frame, symbol=symbol, open_=open_, high=high, low=low, close=close)
+    state = _make_state(frame, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume)
     columns = {}
     for spec in _normalize_specs(specs):
         _assign_spec_columns(columns, spec, _compute_spec(state, spec), to_pandas=False)
@@ -378,6 +407,7 @@ def panel_indicators_cudf(
     high: str = "high",
     low: str = "low",
     close: str = "close",
+    volume: str = "volume",
     as_pandas: bool = True,
 ):
     """cuDF implementation for CUDA-capable panel indicators."""
@@ -388,7 +418,7 @@ def panel_indicators_cudf(
         raise ImportError("cuDF is required for CUDA panel indicators.") from exc
 
     gpu_frame = cudf.from_pandas(frame) if isinstance(frame, pd.DataFrame) else frame
-    state = _make_state(gpu_frame, symbol=symbol, open_=open_, high=high, low=low, close=close)
+    state = _make_state(gpu_frame, symbol=symbol, open_=open_, high=high, low=low, close=close, volume=volume)
     columns = {}
     for spec in _normalize_specs(specs):
         _assign_spec_columns(columns, spec, _compute_spec(state, spec), to_pandas=False)
@@ -396,7 +426,7 @@ def panel_indicators_cudf(
     return result.to_pandas() if as_pandas else result
 
 
-def _make_state(frame, *, symbol: str, open_: str, high: str, low: str, close: str) -> dict[str, object]:
+def _make_state(frame, *, symbol: str, open_: str, high: str, low: str, close: str, volume: str) -> dict[str, object]:
     _validate_columns(frame, (symbol, high, low, close))
     grouped = frame.groupby(symbol, sort=False, observed=True) if isinstance(frame, pd.DataFrame) else frame.groupby(symbol, sort=False)
     return {
@@ -407,6 +437,7 @@ def _make_state(frame, *, symbol: str, open_: str, high: str, low: str, close: s
         "high": high,
         "low": low,
         "close": close,
+        "volume": volume,
     }
 
 
@@ -460,6 +491,43 @@ def _compute_spec(state: dict[str, object], spec: PanelIndicatorSpec):
         denominator = high_n - low_n
         denominator = denominator.replace(0.0, np.nan) if hasattr(denominator, "replace") else denominator.where(denominator != 0.0)
         return -spec.scalar * (high_n - state["frame"][state["close"]]) / denominator
+    if kind == "ao":
+        median_price = 0.5 * (state["frame"][state["high"]] + state["frame"][state["low"]])
+        fast = _rolling_series(state, median_price, "median_price", 5, "mean")
+        slow = _rolling_series(state, median_price, "median_price", 34, "mean")
+        return fast - slow
+    if kind == "cmo":
+        diff = state["frame"][state["close"]] - state["grouped"][state["close"]].shift(1)
+        positive = diff.clip(lower=0)
+        negative = diff.clip(upper=0).abs()
+        pos_sum = _rolling_series(state, positive, "positive", spec.length, "sum")
+        neg_sum = _rolling_series(state, negative, "negative", spec.length, "sum")
+        return spec.scalar * (pos_sum - neg_sum) / (pos_sum + neg_sum)
+    if kind == "cmf":
+        frame = state["frame"]
+        high = frame[state["high"]]
+        low = frame[state["low"]]
+        close = frame[state["close"]]
+        volume = frame[state["volume"]]
+        denominator = high - low
+        denominator = denominator.replace(0.0, np.nan) if hasattr(denominator, "replace") else denominator.where(denominator != 0.0)
+        ad = (2.0 * close - (high + low)) * volume / denominator
+        ad_sum = _rolling_series(state, ad, "ad", spec.length, "sum")
+        vol_sum = _rolling(state, state["volume"], spec.length, "sum")
+        return ad_sum / vol_sum
+    if kind == "hvol":
+        log_return = _log_return(state)
+        return 100.0 * _rolling_series(state, log_return, "log_return", spec.length, "std", ddof=spec.ddof) * np.sqrt(252.0)
+    if kind == "obv":
+        sign = _signed_change(state, state["close"], initial=1.0)
+        return _grouped_cumsum(state, sign * state["frame"][state["volume"]], "obv_volume")
+    if kind == "pvt":
+        roc = _roc(state, 1 if spec.length is None else spec.length, spec.scalar)
+        return _grouped_cumsum(state, roc * state["frame"][state["volume"]], "pvt_value")
+    if kind == "pvi":
+        return _volume_index(state, 1 if spec.length is None else spec.length, positive=True)
+    if kind == "nvi":
+        return _volume_index(state, 1 if spec.length is None else spec.length, positive=False)
     raise KeyError(f"unsupported CUDA panel indicator: {kind}")
 
 
@@ -485,6 +553,38 @@ def _roc(state, length: int | None, scalar: float):
     close = state["close"]
     shifted = state["grouped"][close].shift(_require_length(length))
     return scalar * (state["frame"][close] / shifted - 1.0)
+
+
+def _signed_change(state, column: str, *, initial: float | None = None):
+    series = state["frame"][column]
+    previous = state["grouped"][column].shift(1)
+    diff = series - previous
+    sign = diff * 0.0
+    sign = sign.where(diff <= 0, 1.0)
+    sign = sign.where(diff >= 0, -1.0)
+    if initial is not None:
+        sign = sign.where(previous.notna(), initial)
+    return sign
+
+
+def _grouped_cumsum(state, series, name: str):
+    frame = state["frame"]
+    symbol = state["symbol"]
+    temp = frame[[symbol]].copy()
+    temp[name] = series
+    grouped = temp.groupby(symbol, sort=False, observed=True) if isinstance(temp, pd.DataFrame) else temp.groupby(symbol, sort=False)
+    return grouped[name].cumsum()
+
+
+def _volume_index(state, length: int, *, positive: bool):
+    volume_sign = _signed_change(state, state["volume"], initial=1.0)
+    roc = _roc(state, length, 100.0)
+    event = volume_sign.abs() * roc
+    event = event.where(volume_sign > 0) if positive else event.where(volume_sign < 0)
+    event = event.fillna(0.0)
+    previous_volume = state["grouped"][state["volume"]].shift(1)
+    event = event.where(previous_volume.notna(), 1000.0)
+    return _grouped_cumsum(state, event, "volume_index")
 
 
 def _true_range(state):
