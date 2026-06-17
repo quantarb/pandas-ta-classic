@@ -145,6 +145,7 @@ df.ta.strategy("CommonStrategy") # Runs commonly used indicators
 - **252 Unique Indicators & Patterns** - 192 category indicators plus 62 CDL patterns via `cdl_pattern()`
 - **Dynamic Category Discovery** - automatically detects all available indicators from the filesystem
 - **Optional Numba Acceleration** - 6–230× speedups via `pip install pandas-ta-classic[performance]`
+- **Optional CUDA Panel Acceleration** - Batched OHLCV rolling indicators via `pip install pandas-ta-classic[cuda]`
 - **Strategy System** with multiprocessing support for bulk indicator processing
 - **Fluent API Chaining**: ``df.ta.chain().sma(20).ta.rsi(14).ta.macd().ta.bbands(20)`` — chain multiple indicators in a single expression
 - **Pandas DataFrame Extension** for seamless integration (`df.ta.indicator()`)
@@ -216,6 +217,47 @@ pip install tulipy # tulipy only (oracle test use only)
 **Performance boost:** Install `numba` for 6–230× speedups on computation-heavy indicators:
 - Using `uv`: `uv pip install pandas-ta-classic[performance]`
 - Using `pip`: `pip install pandas-ta-classic[performance]`
+
+**CUDA panel acceleration:** Install the CUDA extra on CUDA 12 systems to enable
+cuDF-backed multi-symbol OHLCV panels:
+```bash
+pip install -e ".[cuda]"
+```
+
+```python
+from pandas_ta_classic.cuda import panel_indicators
+
+# Long panel with columns: symbol, open, high, low, close, volume.
+# Symbols can have different row counts; no matrix padding is required.
+features = panel_indicators(ohlcv, engine="auto")
+```
+
+`engine="auto"` uses a static policy/heuristic by default, so it does not
+benchmark on every run. It keeps small single-symbol workloads on pandas because
+transfer and kernel-launch overhead dominate. Multi-symbol
+rolling/window families are the primary CUDA target: SMA, stdev, variance,
+zscore, Bollinger bands, Donchian channels, stochastic, true range, ATR, and
+Williams %R.
+
+Benchmark your machine and data shape:
+```bash
+python examples/benchmark_cuda_panel.py --symbols 800 --rows 2500 --variable-lengths
+```
+
+To calibrate the auto policy for a specific shape instead of using the static
+registry, call `panel_indicators(..., engine="auto", calibrate=True)`. Use
+`refresh=True` to force a new benchmark and overwrite the persisted policy.
+
+**CUDA panel acceleration:** Install cuDF/CuPy for batched rolling OHLCV indicators:
+
+- Using `uv`: `uv pip install pandas-ta-classic[cuda]`
+- Using `pip`: `pip install pandas-ta-classic[cuda]`
+
+```python
+from pandas_ta_classic.cuda import rolling_indicators
+
+features = rolling_indicators(ohlcv_panel, symbol="symbol", engine="auto")
+```
 
 ## Contributing
 

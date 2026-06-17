@@ -39,6 +39,8 @@ version = __version__
 Imports = {
     "alpha-vantage": find_spec("alpha_vantage") is not None,
     "backtrader": find_spec("backtrader") is not None,
+    "cudf": find_spec("cudf") is not None,
+    "cupy": find_spec("cupy") is not None,
     "cython": find_spec("cython") is not None,
     "matplotlib": find_spec("matplotlib") is not None,
     "mplfinance": find_spec("mplfinance") is not None,

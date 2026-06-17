@@ -113,6 +113,12 @@ performance = [
     "cython>=3.0.0"
 ]
 
+# Optional CUDA acceleration for batched panel indicators
+cuda = [
+    "cudf-cu12>=25.0.0",
+    "cupy-cuda12x>=13.0.0"
+]
+
 # Data sources and external integrations
 integration = [
     "vectorbt",
@@ -168,6 +174,7 @@ quote-style = "preserve"
 packages = [
     "pandas_ta_classic",
     "pandas_ta_classic.candles",
+    "pandas_ta_classic.cuda",
     "pandas_ta_classic.cycles",
     "pandas_ta_classic.momentum",
     "pandas_ta_classic.overlap",
