@@ -10,6 +10,11 @@ from .rolling import (
     rolling_indicators_pandas,
     synchronize_cuda,
 )
+from .vectorta import (
+    panel_indicators_vectorta,
+    panel_indicators_vectorta_cpu,
+    vectorta_available,
+)
 from .panel import (
     DEFAULT_PANEL_SPECS,
     PanelIndicatorSpec,
@@ -37,7 +42,10 @@ __all__ = [
     "panel_indicators_auto",
     "panel_indicators_cudf",
     "panel_indicators_pandas",
+    "panel_indicators_vectorta",
+    "panel_indicators_vectorta_cpu",
     "static_panel_engine_policy",
+    "vectorta_available",
     "rolling_indicators",
     "rolling_indicators_cudf",
     "rolling_indicators_pandas",

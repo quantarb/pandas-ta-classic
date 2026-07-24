@@ -119,6 +119,12 @@ cuda = [
     "cupy-cuda12x>=13.0.0"
 ]
 
+# Optional VectorTA backend (install from source with CUDA for GPU entry points)
+vectorta = [
+    "vector-ta>=0.2.8",
+    "cupy-cuda12x>=13.0.0"
+]
+
 # Data sources and external integrations
 integration = [
     "vectorbt",

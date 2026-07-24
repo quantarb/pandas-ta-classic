@@ -18,12 +18,16 @@ import pandas_ta_classic as ta
 
 CUDA_PANEL_IMPLEMENTED = {
     "ao",
+    "aroon",
     "atr",
     "bbands",
     "cmf",
     "cmo",
     "donchian",
     "hvol",
+    "maxindex",
+    "minindex",
+    "minmaxindex",
     "mom",
     "nvi",
     "obv",
@@ -36,16 +40,21 @@ CUDA_PANEL_IMPLEMENTED = {
     "true_range",
     "variance",
     "willr",
+    "wma",
     "zscore",
 }
 CUDA_PANEL_ACCELERATED = {
     "ao",
+    "aroon",
     "atr",
     "bbands",
     "cmf",
     "cmo",
     "donchian",
     "hvol",
+    "maxindex",
+    "minindex",
+    "minmaxindex",
     "obv",
     "pvt",
     "sma",
@@ -54,6 +63,7 @@ CUDA_PANEL_ACCELERATED = {
     "true_range",
     "variance",
     "willr",
+    "wma",
     "zscore",
 }
 KNOWN_MULTI_SYMBOL_CUDA_FASTER = [

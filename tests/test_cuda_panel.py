@@ -67,6 +67,14 @@ def test_panel_indicators_pandas_has_expected_default_columns():
         "pvt",
         "pvi_1",
         "nvi_1",
+        "aroon_up_14",
+        "aroon_down_14",
+        "aroon_osc_14",
+        "wma_10",
+        "minindex_30",
+        "maxindex_30",
+        "minidx_30",
+        "maxidx_30",
     } == set(result.columns)
     assert result["return"].isna().groupby(frame["symbol"]).first().all()
     assert result["sma_20"].notna().any()
@@ -113,6 +121,35 @@ def test_new_panel_specs_match_pandas_ta_per_symbol():
                     "pvt": ta.pvt(part["close"], part["volume"], drift=1),
                     "pvi_1": ta.pvi(part["close"], part["volume"], length=1),
                     "nvi_1": ta.nvi(part["close"], part["volume"], length=1),
+                },
+                index=part.index,
+            )
+        )
+    expected = pd.concat(expected_parts).sort_index()
+
+    pd.testing.assert_frame_equal(result, expected, check_dtype=False, check_exact=False, rtol=1e-6, atol=1e-6)
+
+
+def test_new_rolling_panel_specs_match_pandas_ta_per_symbol():
+    frame = make_panel(symbols=3, rows=80)
+    specs = ["aroon_14", "wma_10", "minindex_30", "maxindex_30", "minmaxindex_30"]
+    result = panel_indicators_pandas(frame, specs)
+
+    expected_parts = []
+    for _, part in frame.groupby("symbol", sort=False):
+        aroon_df = ta.aroon(part["high"], part["low"], length=14, talib=False)
+        minmaxindex_df = ta.minmaxindex(part["close"], length=30)
+        expected_parts.append(
+            pd.DataFrame(
+                {
+                    "aroon_up_14": aroon_df.iloc[:, 1],
+                    "aroon_down_14": aroon_df.iloc[:, 0],
+                    "aroon_osc_14": aroon_df.iloc[:, 2],
+                    "wma_10": ta.wma(part["close"], length=10, talib=False),
+                    "minindex_30": ta.minindex(part["close"], length=30),
+                    "maxindex_30": ta.maxindex(part["close"], length=30),
+                    "minidx_30": minmaxindex_df.iloc[:, 0],
+                    "maxidx_30": minmaxindex_df.iloc[:, 1],
                 },
                 index=part.index,
             )

@@ -20,9 +20,10 @@ import numpy as np
 import pandas as pd
 
 from pandas_ta_classic.cuda.rolling import cuda_available, synchronize_cuda
+from pandas_ta_classic.utils import recent_maximum_index, recent_minimum_index
 
 
-Engine = Literal["auto", "pandas", "cudf", "cuda", "gpu"]
+Engine = Literal["auto", "pandas", "cudf", "cuda", "gpu", "vectorta", "vector_ta", "vta"]
 IndicatorEngine = Literal["pandas", "cudf"]
 
 
@@ -79,6 +80,11 @@ DEFAULT_PANEL_SPECS: tuple[PanelIndicatorSpec, ...] = (
     PanelIndicatorSpec("pvt"),
     PanelIndicatorSpec("pvi", length=1),
     PanelIndicatorSpec("nvi", length=1),
+    PanelIndicatorSpec("aroon", length=14),
+    PanelIndicatorSpec("wma", length=10),
+    PanelIndicatorSpec("minindex", length=30),
+    PanelIndicatorSpec("maxindex", length=30),
+    PanelIndicatorSpec("minmaxindex", length=30),
 )
 
 _AUTO_POLICY_CACHE: dict[tuple[int, int, tuple[int, ...], tuple[tuple[str, int | None, str, float, float, int], ...]], dict[str, IndicatorEngine]] = {}
@@ -99,6 +105,11 @@ _CUDA_FRIENDLY_KINDS = {
     "hvol",
     "obv",
     "pvt",
+    "aroon",
+    "wma",
+    "minindex",
+    "maxindex",
+    "minmaxindex",
 }
 _MIN_CUDA_ROWS = 100_000
 _MIN_CUDA_SYMBOLS = 16
@@ -134,10 +145,19 @@ def panel_indicators(
     """
 
     normalized_engine = engine.lower()
-    if normalized_engine not in {"auto", "pandas", "cudf", "cuda", "gpu"}:
-        raise ValueError("engine must be one of: auto, pandas, cudf, cuda, gpu")
+    if normalized_engine not in {"auto", "pandas", "cudf", "cuda", "gpu", "vectorta", "vector_ta", "vta"}:
+        raise ValueError("engine must be one of: auto, pandas, cudf, cuda, gpu, vectorta")
 
     normalized_specs = _normalize_specs(specs)
+    if normalized_engine in {"vectorta", "vector_ta", "vta"}:
+        from pandas_ta_classic.cuda.vectorta import panel_indicators_vectorta
+
+        return panel_indicators_vectorta(
+            frame,
+            normalized_specs,
+            symbol=symbol,
+            close=close,
+        )
     if normalized_engine == "pandas":
         return panel_indicators_pandas(
             frame,
@@ -528,6 +548,20 @@ def _compute_spec(state: dict[str, object], spec: PanelIndicatorSpec):
         return _volume_index(state, 1 if spec.length is None else spec.length, positive=True)
     if kind == "nvi":
         return _volume_index(state, 1 if spec.length is None else spec.length, positive=False)
+    if kind == "aroon":
+        return _aroon(state, spec.length, spec.scalar)
+    if kind == "wma":
+        return _wma(state, spec.column, spec.length)
+    if kind == "minindex":
+        return _minindex(state, spec.column, spec.length)
+    if kind == "maxindex":
+        return _maxindex(state, spec.column, spec.length)
+    if kind == "minmaxindex":
+        return _minmaxindex(state, spec.column, spec.length)
+    if kind in {"rsi", "ema"}:
+        raise KeyError(
+            f"{kind} requires the VectorTA backend; use engine='vectorta' or panel_indicators_vectorta()"
+        )
     raise KeyError(f"unsupported CUDA panel indicator: {kind}")
 
 
@@ -621,6 +655,103 @@ def _rolling(state, column: str, length: int | None, method: str, **kwargs):
     return _drop_group_level(
         getattr(state["grouped"][column].rolling(_require_length(length), min_periods=_require_length(length)), method)(**kwargs)
     )
+
+
+def _rolling_apply(
+    state,
+    column: str,
+    length: int | None,
+    func: Callable[..., object],
+    *,
+    window: int | None = None,
+    min_periods: int | None = None,
+):
+    required = _require_length(length)
+    window_size = int(window) if window is not None else required
+    min_p = int(min_periods) if min_periods is not None else required
+    return _drop_group_level(state["grouped"][column].rolling(window_size, min_periods=min_p).apply(func, raw=True))
+
+
+def _aroon(state, length: int | None, scalar: float):
+    required = _require_length(length)
+    window = required + 1
+    periods_from_hh = _rolling_apply(
+        state,
+        state["high"],
+        required,
+        recent_maximum_index,
+        window=window,
+        min_periods=window,
+    )
+    periods_from_ll = _rolling_apply(
+        state,
+        state["low"],
+        required,
+        recent_minimum_index,
+        window=window,
+        min_periods=window,
+    )
+    aroon_up = scalar * (1.0 - (periods_from_hh / required))
+    aroon_down = scalar * (1.0 - (periods_from_ll / required))
+    return {
+        f"aroon_up_{required}": aroon_up,
+        f"aroon_down_{required}": aroon_down,
+        f"aroon_osc_{required}": aroon_up - aroon_down,
+    }
+
+
+def _wma(state, column: str, length: int | None):
+    required = _require_length(length)
+    return _rolling_apply(state, column, required, _linear_weighted_mean)
+
+
+def _linear_weighted_mean(values):
+    window = len(values)
+    total_weight = 0.5 * window * (window + 1)
+    weighted_sum = 0.0
+    for index, value in enumerate(values):
+        weighted_sum += (index + 1) * value
+    return weighted_sum / total_weight
+
+
+def _minindex(state, column: str, length: int | None):
+    required = _require_length(length)
+    return _rolling_apply(state, column, required, _rolling_argmin)
+
+
+def _maxindex(state, column: str, length: int | None):
+    required = _require_length(length)
+    return _rolling_apply(state, column, required, _rolling_argmax)
+
+
+def _minmaxindex(state, column: str, length: int | None):
+    required = _require_length(length)
+    return {
+        f"minidx_{required}": _rolling_apply(state, column, required, _rolling_argmin),
+        f"maxidx_{required}": _rolling_apply(state, column, required, _rolling_argmax),
+    }
+
+
+def _rolling_argmin(values):
+    best_index = 0
+    best_value = values[0]
+    for index in range(1, len(values)):
+        value = values[index]
+        if value < best_value:
+            best_index = index
+            best_value = value
+    return best_index
+
+
+def _rolling_argmax(values):
+    best_index = 0
+    best_value = values[0]
+    for index in range(1, len(values)):
+        value = values[index]
+        if value > best_value:
+            best_index = index
+            best_value = value
+    return best_index
 
 
 def _rolling_series(state, series, name: str, length: int | None, method: str, **kwargs):

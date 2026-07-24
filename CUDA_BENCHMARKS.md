@@ -68,6 +68,11 @@ than for rolling/window indicators.
 | `hvol_20` | 0.157391s | 0.064591s | 2.44x | cuDF |
 | `obv` | 0.076254s | 0.064259s | 1.19x | cuDF |
 | `pvt` | 0.072061s | 0.061851s | 1.17x | cuDF |
+| `aroon_14` | 3.459000s | 0.418200s | 8.27x | cuDF |
+| `wma_10` | 2.148300s | 0.051300s | 41.85x | cuDF |
+| `minindex_30` | 2.366200s | 0.053200s | 44.48x | cuDF |
+| `maxindex_30` | 2.363500s | 0.054700s | 43.20x | cuDF |
+| `minmaxindex_30` | 4.747000s | 0.054500s | 87.08x | cuDF |
 
 ### Slower With CUDA
 
@@ -103,7 +108,7 @@ standalone single-symbol indicator.
 
 The reusable panel CUDA engine currently covers these indicator families:
 
-- Accelerated on large multi-symbol panels: `sma`, `stdev`, `variance`, `zscore`, `bbands`, `donchian`, `stoch`, `true_range`, `atr`, `willr`, `ao`, `cmo`, `cmf`, `hvol`, `obv`, `pvt`
+- Accelerated on large multi-symbol panels: `sma`, `stdev`, `variance`, `zscore`, `bbands`, `donchian`, `stoch`, `true_range`, `atr`, `willr`, `ao`, `cmo`, `cmf`, `hvol`, `obv`, `pvt`, `aroon`, `wma`, `minindex`, `maxindex`, `minmaxindex`
 - Implemented but pandas-default because cuDF is slower in the benchmark: `return`, `log_return`, `mom`, `roc`, `pvi`, `nvi`
 
 The full inventory report is in `benchmark_results/all_indicators.md`. It
